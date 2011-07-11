@@ -70,13 +70,28 @@ sub _convert_symbol {
 }
 
 
-# PerlIO::via interface
+
 # based on PerlIO::via::QuotedPrint example
+
+=head1 PerlIO::via interface
+
+=head2 PUSHED
+    
+    Initialize layer
+
+=cut
 
 sub PUSHED {
     my ( $class ) = @_;
     return bless \*PUSHED, $class;
 };
+
+
+=head2 WRITE
+
+    Filter text
+
+=cut
 
 sub WRITE {
     my ( undef, $line, $handle ) = @_;
