@@ -1,0 +1,1 @@
+PerlIO::via::PrepareCP1251 is a PerlIO layer filter to prepare unicode stream to be encoded in cp1251 codepage.
