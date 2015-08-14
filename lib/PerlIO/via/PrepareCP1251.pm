@@ -6,20 +6,40 @@ package PerlIO::via::PrepareCP1251;
 use 5.010;
 use strict;
 use warnings;
-use autodie;
 use utf8;
+
 use charnames ':full';
 
 use Unicode::Normalize;
-use Data::Dumper;
+
+=head1 SYNOPSIS
+
+    require PerlIO::via::PrepareCP1251;
+
+    # note the filter order
+    open my $fh, '>:encoding(cp1251):via(PrepareCP1251)', $filename;
+    print {$fh} $unicode_string;
+    close $fh;
+
+=cut
 
 
-our $VERSION = 0.02;
+=head2 $INCOMPATIBLE_CHAR_MODE
+
+Behaviour for incompatible chars:
+
+    pass            - put original symbol
+    default_char    - put $DEFAULT_CHAR
+    skip            - don't put anything
+    charname        - put \N{charname}
+
+=cut
+
+our $INCOMPATIBLE_CHAR_MODE = 'default_char';
+our $DEFAULT_CHAR = q{?};
 
 
-
-
-my %cmap = (
+our %CMAP = (
 
     # Kazakh
 
@@ -41,69 +61,94 @@ my %cmap = (
     "\x{04E9}" => "\x{043E}",
 );
 
+
+_init();
+1;
+
+
+{
 my %codepage;
 
-while ( <DATA> ) {
-    next unless my ( $code, $ucode ) = m{ 0x ([0-9A-F]{2}) \s+ 0x ([0-9A-F]{4}) }xms;
-    $codepage{ chr hex $ucode } = chr hex $code;
+sub _init {
+
+    # load cp1251 to unicode table
+    while ( <DATA> ) {
+        next unless my ( $code, $ucode ) = m{ 0x ([0-9A-F]{2}) \s+ 0x ([0-9A-F]{4}) }xms;
+        $codepage{ chr hex $ucode } = chr hex $code;
+    }
+
+    # remove diacritics
+    for my $codepoint ( 0x000 .. 0x2FFF ) {
+        my $chr = chr $codepoint;
+        next if exists $codepage{$chr};
+        next if exists $CMAP{$chr};
+
+        my $nfd = substr NFD( $chr ), 0, 1;
+        next unless exists $codepage{$nfd};
+
+        $CMAP{$chr} = $nfd;
+    }
+
+    return;
 }
 
-
-# remove diacritics
-for my $codepoint ( 0x000 .. 0x2FFF ) {
-    my $chr = chr $codepoint;
-    next if exists $codepage{$chr};
-    next if exists $cmap{$chr};
-
-    my $nfd = substr NFD( $chr ), 0, 1;
-    next unless exists $codepage{$nfd};
-
-    $cmap{$chr} = $nfd;
-}
 
 sub _convert_symbol {
     my ($char) = @_;
+
+    return $char            if exists $codepage{$char};
+    return $CMAP{$char}     if exists $CMAP{$char};
+    return q{}              if $INCOMPATIBLE_CHAR_MODE eq 'skip';
+    return $DEFAULT_CHAR    if $INCOMPATIBLE_CHAR_MODE eq 'default_char';
+    return $char            if $INCOMPATIBLE_CHAR_MODE eq 'pass';
+
     if ( my $name = charnames::viacode(ord $char) ) {
         return "\\N{$name}";
     }
     return sprintf '\x{%04x}', ord $char;
 }
+}
 
-
-
-# based on PerlIO::via::QuotedPrint example
 
 =head1 PerlIO::via interface
 
 =head2 PUSHED
-    
-    Initialize layer
+
+Constructor
 
 =cut
 
 sub PUSHED {
-    my ( $class ) = @_;
+    my ($class) = @_;
     return bless \*PUSHED, $class;
 };
 
 
+=head2 UTF8
+
+Require utf8 stream
+
+=cut
+
+sub UTF8 {
+    1;
+}
+
+
 =head2 WRITE
 
-    Filter text
+Filter text
 
 =cut
 
 sub WRITE {
     my ( undef, $line, $handle ) = @_;
-    utf8::decode( $line ); # need to promote things back to UTF8
+    utf8::decode $line;
     my $out = join q{},
-        map { $cmap{$_} // ( exists $codepage{$_} ? $_ : _convert_symbol($_) ) }
+        map { _convert_symbol($_) }
         split m//, $line;
-    # utf8::downgrade($x);
     return ( print {$handle} $out ) ? length($line) : -1;
 }
-
-1;
 
 
 __DATA__
